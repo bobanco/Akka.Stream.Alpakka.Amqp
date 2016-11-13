@@ -1,0 +1,28 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 14
+VisualStudioVersion = 14.0.25420.1
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Akka.Stream.Alpakka.Amqp", "Akka.Stream.Alpakka.Amqp\Akka.Stream.Alpakka.Amqp.csproj", "{05F553F7-F1CA-4216-AB67-A8A7372E66C7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Akka.Stream.Alpakka.Amqp.Tests", "Akka.Stream.Alpakka.Amqp.Tests\Akka.Stream.Alpakka.Amqp.Tests.csproj", "{1FCC130F-8C4C-4B11-B630-CE335B6C4AFA}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{05F553F7-F1CA-4216-AB67-A8A7372E66C7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{05F553F7-F1CA-4216-AB67-A8A7372E66C7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{05F553F7-F1CA-4216-AB67-A8A7372E66C7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{05F553F7-F1CA-4216-AB67-A8A7372E66C7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1FCC130F-8C4C-4B11-B630-CE335B6C4AFA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1FCC130F-8C4C-4B11-B630-CE335B6C4AFA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1FCC130F-8C4C-4B11-B630-CE335B6C4AFA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1FCC130F-8C4C-4B11-B630-CE335B6C4AFA}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
