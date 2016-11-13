@@ -148,7 +148,7 @@ namespace Akka.Stream.Alpakka.Amqp
         public string RoutingKey { get; }
         public IList<IDeclaration> Declarations { get; }
 
-        public AmqpSinkSettings Create(IAmqpConnectionSettings connectionSettings)
+        public static AmqpSinkSettings Create(IAmqpConnectionSettings connectionSettings)
         {
             return new AmqpSinkSettings(connectionSettings);
         }

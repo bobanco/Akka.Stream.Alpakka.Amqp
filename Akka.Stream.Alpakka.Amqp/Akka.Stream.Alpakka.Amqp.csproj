@@ -68,6 +68,7 @@
     <Compile Include="AmqpSinkStage.cs" />
     <Compile Include="AmqpSourceStage.cs" />
     <Compile Include="Dsl\AmqpSink.cs" />
+    <Compile Include="Dsl\AmqpSource.cs" />
     <Compile Include="Envelope.cs" />
     <Compile Include="IncomingMessage.cs" />
     <Compile Include="Model.cs" />
