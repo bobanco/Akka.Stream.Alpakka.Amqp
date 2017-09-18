@@ -1,5 +1,9 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
 using Akka.Util.Internal;
+using RabbitMQ.Client;
 
 namespace Akka.Stream.Alpakka.Amqp
 {
@@ -79,6 +83,13 @@ namespace Akka.Stream.Alpakka.Amqp
                 Arguments);
         }
 
+        public NamedQueueSourceSettings WithArguments(params (string paramName, object paramValue)[] arguments)
+        {
+            arguments.ForEach(pair=> Arguments.Add(pair.paramName,pair.paramValue));
+            return new NamedQueueSourceSettings(ConnectionSettings, Queue, Declarations, NoLocal, Exclusive, ConsumerTag,
+                Arguments);
+        }
+
         public NamedQueueSourceSettings WithArguments(string key, object value)
         {
             Arguments.Add(key, value);
@@ -132,6 +143,26 @@ namespace Akka.Stream.Alpakka.Amqp
         }
     }
 
+    public sealed class AmqpReplyToSinkSettings : IAmqpConnectorSettings
+    {
+        private AmqpReplyToSinkSettings(IAmqpConnectionSettings connectionSettings, bool failIfReplyToMissing = true)
+        {
+            ConnectionSettings = connectionSettings;
+            FailIfReplyToMissing = failIfReplyToMissing;
+            Declarations = new List<IDeclaration>();
+        }
+
+        public IAmqpConnectionSettings ConnectionSettings { get; }
+        public bool FailIfReplyToMissing { get; }
+        public IList<IDeclaration> Declarations { get; }
+
+        public static AmqpReplyToSinkSettings Create(IAmqpConnectionSettings connectionSettings,
+            bool failIfReplyToMissing = true)
+        {
+            return new AmqpReplyToSinkSettings(connectionSettings, failIfReplyToMissing);
+        }
+    }
+
     public sealed class AmqpSinkSettings : IAmqpConnectorSettings
     {
         private AmqpSinkSettings(IAmqpConnectionSettings connectionSettings, string exchange = null,
@@ -147,10 +178,10 @@ namespace Akka.Stream.Alpakka.Amqp
         public string Exchange { get; }
         public string RoutingKey { get; }
         public IList<IDeclaration> Declarations { get; }
-
-        public static AmqpSinkSettings Create(IAmqpConnectionSettings connectionSettings)
+        
+        public static AmqpSinkSettings Create(IAmqpConnectionSettings connectionSettings = null)
         {
-            return new AmqpSinkSettings(connectionSettings);
+            return new AmqpSinkSettings(connectionSettings?? DefaultAmqpConnection.Instance);
         }
 
         public AmqpSinkSettings WithExchange(string exchange)
@@ -187,6 +218,7 @@ namespace Akka.Stream.Alpakka.Amqp
     /// <summary>
     /// Connects to a local AMQP broker at the default port with no password.
     /// </summary>
+    // ReSharper disable once InheritdocConsiderUsage
     public class DefaultAmqpConnection : IAmqpConnectionSettings
     {
         public static IAmqpConnectionSettings Instance => new DefaultAmqpConnection();
@@ -194,16 +226,16 @@ namespace Akka.Stream.Alpakka.Amqp
 
     public sealed class AmqpConnectionUri : IAmqpConnectionSettings
     {
-        private AmqpConnectionUri(string uri)
+        private AmqpConnectionUri(Uri uri)
         {
             Uri = uri;
         }
 
-        public string Uri { get; }
+        public Uri Uri { get; }
 
         public AmqpConnectionUri Create(string uri)
         {
-            return new AmqpConnectionUri(uri);
+            return new AmqpConnectionUri(new Uri(uri));
         }
 
         public override string ToString()
@@ -214,49 +246,126 @@ namespace Akka.Stream.Alpakka.Amqp
 
     public sealed class AmqpConnectionDetails : IAmqpConnectionSettings
     {
-        private AmqpConnectionDetails(string host, int port, AmqpCredentials credentials = null,
-            string virtualHost = null)
+        private AmqpConnectionDetails(IList<(string host, int port)> hostAndPortList, 
+            AmqpCredentials? credentials = null,
+            string virtualHost = null,
+            SslOption ssl = null,
+            ushort? requestedHeartbeat = null,
+            TimeSpan? connectionTimeout = null,
+            TimeSpan? handshakeTimeout = null,
+            TimeSpan? networkRecoveryInterval = null,
+            bool? automaticRecoveryEnabled = null,
+            bool? topologyRecoveryEnabled = null)
         {
-            Host = host;
-            Port = port;
+            HostAndPortList = hostAndPortList;
             Credentials = credentials;
             VirtualHost = virtualHost;
+            Ssl = ssl;
+            RequestedHeartbeat = requestedHeartbeat;
+            ConnectionTimeout = connectionTimeout;
+            HandshakeTimeout = handshakeTimeout;
+            NetworkRecoveryInterval = networkRecoveryInterval;
+            AutomaticRecoveryEnabled = automaticRecoveryEnabled;
+            TopologyRecoveryEnabled = topologyRecoveryEnabled;
         }
 
-        public string Host { get; }
-        public int Port { get; }
-        public AmqpCredentials Credentials { get; }
+        public IList<(string host, int port)> HostAndPortList { get; }
+        public AmqpCredentials? Credentials { get; }
         public string VirtualHost { get; }
+        public SslOption Ssl { get; }
+        public ushort? RequestedHeartbeat { get; }
+        public TimeSpan? ConnectionTimeout { get; }
+        public TimeSpan? HandshakeTimeout { get; }
+        public TimeSpan? NetworkRecoveryInterval { get; }
+        public bool? AutomaticRecoveryEnabled { get; }
+        public bool? TopologyRecoveryEnabled { get; }
 
         public static AmqpConnectionDetails Create(string host, int port)
         {
-            return new AmqpConnectionDetails(host, port);
+            return new AmqpConnectionDetails(new List<(string host, int port)> {(host, port)});
         }
 
-        public static AmqpConnectionDetails Create(string host, int port, AmqpCredentials credentials)
+        public AmqpConnectionDetails WithHostsAndPorts((string host, int port) hostAndPort,
+            params (string host, int port)[] hostAndPortList)
         {
-            return new AmqpConnectionDetails(host, port, credentials);
+            return new AmqpConnectionDetails(new List<(string host, int port)>(hostAndPortList.ToList()) {hostAndPort},
+                Credentials, VirtualHost, Ssl, RequestedHeartbeat,
+                ConnectionTimeout, HandshakeTimeout, NetworkRecoveryInterval, AutomaticRecoveryEnabled,
+                TopologyRecoveryEnabled);
         }
 
-        public static AmqpConnectionDetails Create(string host, int port, AmqpCredentials credentials,
-            string virtualHost)
+        public AmqpConnectionDetails WithCredentials(AmqpCredentials credentials)
         {
-            return new AmqpConnectionDetails(host, port, credentials, virtualHost);
+            return new AmqpConnectionDetails(HostAndPortList, credentials, VirtualHost, Ssl, RequestedHeartbeat,
+                ConnectionTimeout, HandshakeTimeout, NetworkRecoveryInterval, AutomaticRecoveryEnabled,
+                TopologyRecoveryEnabled);
         }
 
-        public static AmqpConnectionDetails Create(string host, int port, string virtualHost)
+        public AmqpConnectionDetails WithVirtualHost(string virtualHost)
         {
-            return new AmqpConnectionDetails(host, port, null, virtualHost);
+            return new AmqpConnectionDetails(HostAndPortList, Credentials, virtualHost, Ssl, RequestedHeartbeat,
+                ConnectionTimeout, HandshakeTimeout, NetworkRecoveryInterval, AutomaticRecoveryEnabled,
+                TopologyRecoveryEnabled);
         }
+
+        public AmqpConnectionDetails WithSsl(SslOption sslOption)
+        {
+            return new AmqpConnectionDetails(HostAndPortList, Credentials, VirtualHost, sslOption, RequestedHeartbeat,
+                ConnectionTimeout, HandshakeTimeout, NetworkRecoveryInterval, AutomaticRecoveryEnabled,
+                TopologyRecoveryEnabled);
+        }
+
+        public AmqpConnectionDetails WithRequestedHeartbeat(ushort requestedHeartbeat)
+        {
+            return new AmqpConnectionDetails(HostAndPortList, Credentials, VirtualHost, Ssl, requestedHeartbeat,
+                ConnectionTimeout, HandshakeTimeout, NetworkRecoveryInterval, AutomaticRecoveryEnabled,
+                TopologyRecoveryEnabled);
+        }
+
+        public AmqpConnectionDetails WithConnectionTimeout(TimeSpan connectionTimeout)
+        {
+            return new AmqpConnectionDetails(HostAndPortList, Credentials, VirtualHost, Ssl, RequestedHeartbeat,
+                connectionTimeout, HandshakeTimeout, NetworkRecoveryInterval, AutomaticRecoveryEnabled,
+                TopologyRecoveryEnabled);
+        }
+
+        public AmqpConnectionDetails WithHandshakeTimeout(TimeSpan handshakeTimeout)
+        {
+            return new AmqpConnectionDetails(HostAndPortList, Credentials, VirtualHost, Ssl, RequestedHeartbeat,
+                ConnectionTimeout, handshakeTimeout, NetworkRecoveryInterval, AutomaticRecoveryEnabled,
+                TopologyRecoveryEnabled);
+        }
+
+        public AmqpConnectionDetails WithNetworkRecoveryInterval(TimeSpan networkRecoveryInterval)
+        {
+            return new AmqpConnectionDetails(HostAndPortList, Credentials, VirtualHost, Ssl, RequestedHeartbeat,
+                ConnectionTimeout, HandshakeTimeout, networkRecoveryInterval, AutomaticRecoveryEnabled,
+                TopologyRecoveryEnabled);
+        }
+
+        public AmqpConnectionDetails WithAutomaticRecoveryEnabled(bool automaticRecoveryEnabled)
+        {
+            return new AmqpConnectionDetails(HostAndPortList, Credentials, VirtualHost, Ssl, RequestedHeartbeat,
+                ConnectionTimeout, HandshakeTimeout, NetworkRecoveryInterval, automaticRecoveryEnabled,
+                TopologyRecoveryEnabled);
+        }
+
+        public AmqpConnectionDetails WithTopologyRecoveryEnabled(bool topologyRecoveryEnabled)
+        {
+            return new AmqpConnectionDetails(HostAndPortList, Credentials, VirtualHost, Ssl, RequestedHeartbeat,
+                ConnectionTimeout, HandshakeTimeout, NetworkRecoveryInterval, AutomaticRecoveryEnabled,
+                topologyRecoveryEnabled);
+        }
+
 
         public override string ToString()
         {
             return
-                $"AmqpConnectionDetails(Host={Host}, Port={Port}, Credentials={Credentials}, VirtualHost={VirtualHost})";
+                $"AmqpConnectionDetails(HostAndPortList=({HostAndPortList.Select(x => $"[{x.host}:{x.port}]").Aggregate((left, right) => $"{right}, {left}")}), Credentials={Credentials}, VirtualHost={VirtualHost})";
         }
     }
 
-    public sealed class AmqpCredentials
+    public struct AmqpCredentials : IEquatable<AmqpCredentials>
     {
         public string Username { get; }
         public string Password { get; }
@@ -275,6 +384,36 @@ namespace Akka.Stream.Alpakka.Amqp
         public override string ToString()
         {
             return $"AmqpCredentials(Username={Username}, Password=********)";
+        }
+
+        public override bool Equals(object obj)
+        {
+            return obj is AmqpCredentials && Equals((AmqpCredentials)obj);
+        }
+
+        public bool Equals(AmqpCredentials other)
+        {
+            return Username == other.Username &&
+                   Password == other.Password;
+        }
+
+        public override int GetHashCode()
+        {
+            var hashCode = 568732665;
+            hashCode = hashCode * -1521134295 + base.GetHashCode();
+            hashCode = hashCode * -1521134295 + EqualityComparer<string>.Default.GetHashCode(Username);
+            hashCode = hashCode * -1521134295 + EqualityComparer<string>.Default.GetHashCode(Password);
+            return hashCode;
+        }
+
+        public static bool operator ==(AmqpCredentials credentials1, AmqpCredentials credentials2)
+        {
+            return credentials1.Equals(credentials2);
+        }
+
+        public static bool operator !=(AmqpCredentials credentials1, AmqpCredentials credentials2)
+        {
+            return !(credentials1 == credentials2);
         }
     }
 

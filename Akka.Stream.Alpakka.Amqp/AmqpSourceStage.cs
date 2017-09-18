@@ -31,27 +31,30 @@ namespace Akka.Stream.Alpakka.Amqp
 
         public override SourceShape<IncomingMessage> Shape => new SourceShape<IncomingMessage>(Out);
 
-        public Outlet<IncomingMessage> Out = new Outlet<IncomingMessage>("AmqpSource.out");
+        public readonly Outlet<IncomingMessage> Out = new Outlet<IncomingMessage>("AmqpSource.out");
 
         protected override Attributes InitialAttributes => DefaultAttributes;
 
         protected override GraphStageLogic CreateLogic(Attributes inheritedAttributes)
         {
-            return new AmqpSourceStageLogic(this, Out, Shape);
+            return new AmqpSourceStageLogic(this);
+        }
+
+        public override string ToString()
+        {
+            return "AmqpSource";
         }
 
         private class AmqpSourceStageLogic : AmqpConnectorLogic
         {
             private readonly AmqpSourceStage _stage;
-            private readonly Outlet<IncomingMessage> _outlet;
             private readonly Queue<IncomingMessage> _queue = new Queue<IncomingMessage>();
             private IBasicConsumer _amqpSourceConsumer;
             
-            public AmqpSourceStageLogic(AmqpSourceStage stage, Outlet<IncomingMessage> outlet, Shape shape) : base(shape)
+            public AmqpSourceStageLogic(AmqpSourceStage stage) : base(stage.Shape)
             {
                 _stage = stage;
-                _outlet = outlet;
-                SetHandler(_outlet, () =>
+                SetHandler(_stage.Out, () =>
                 {
                     if (_queue.Count > 0)
                     {
@@ -61,10 +64,13 @@ namespace Akka.Stream.Alpakka.Amqp
             }
 
             public override IAmqpConnectorSettings Settings => _stage.Settings;
-            public override IConnectionFactory ConnectionFactoryFrom(IAmqpConnectionSettings settings)
-            {
-                return AmqpConnector.ConnectionFactoryFrom(settings);
-            }
+
+            public override IConnectionFactory ConnectionFactoryFrom(IAmqpConnectionSettings settings) =>
+                AmqpConnector.ConnectionFactoryFrom(settings);
+
+            public override IConnection NewConnection(IConnectionFactory factory, IAmqpConnectionSettings settings) =>
+                AmqpConnector.NewConnection(factory, settings);
+
 
             public override void WhenConnected()
             {
@@ -97,6 +103,11 @@ namespace Akka.Stream.Alpakka.Amqp
                 }
             }
 
+            public override void OnFailure(Exception ex)
+            {
+                
+            }
+
             private void SetupNamedQueue(NamedQueueSourceSettings settings)
             {
                 Channel.BasicConsume(settings.Queue,
@@ -119,7 +130,7 @@ namespace Akka.Stream.Alpakka.Amqp
 
             private void HandleDelivery(IncomingMessage message)
             {
-                if (IsAvailable(_outlet))
+                if (IsAvailable(_stage.Out))
                 {
                     PushAndAckMessage(message);
                 }
@@ -140,13 +151,15 @@ namespace Akka.Stream.Alpakka.Amqp
 
             private void PushAndAckMessage(IncomingMessage message)
             {
-                Push(_outlet, message);
+                Push(_stage.Out, message);
                 // ack it as soon as we have passed it downstream
                 // TODO ack less often and do batch acks with multiple = true would probably be more performant
                 Channel.BasicAck(message.Envelope.DeliveryTag,
                     false);// just this single message
 
             }
+
+            
 
             private class DefaultConsumer : DefaultBasicConsumer
             {
@@ -163,7 +176,7 @@ namespace Akka.Stream.Alpakka.Amqp
                     IBasicProperties properties, byte[] body)
                 {
                     var envelope = Envelope.Create(deliveryTag, redelivered, exchange, routingKey);
-                    var incomingMessage = new IncomingMessage(ByteString.Create(body), envelope, properties);
+                    var incomingMessage = new IncomingMessage(ByteString.CopyFrom(body), envelope, properties);
                     _consumerCallback?.Invoke(incomingMessage);
                 }
 

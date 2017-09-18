@@ -8,6 +8,7 @@ using Akka.IO;
 using Akka.Stream.Alpakka.Amqp.Dsl;
 using Akka.Streams;
 using Akka.Streams.Dsl;
+using RabbitMQ.Client;
 using Xunit;
 
 namespace Akka.Stream.Alpakka.Amqp.Tests
@@ -27,13 +28,19 @@ namespace Akka.Stream.Alpakka.Amqp.Tests
         [Fact]
         public void PublishAndConsume()
         {
+            var connectionSettings = AmqpConnectionDetails.Create("localhost", 5672).WithAutomaticRecoveryEnabled(true).WithNetworkRecoveryInterval(TimeSpan.FromSeconds(1));
+
+            var exchange = ExchangeDeclaration.Create("logs", "topic");
+
             //queue declaration
             var queueName = "amqp-conn-it-spec-simple-queue-" + Environment.TickCount;
             var queueDeclaration = QueueDeclaration.Create(queueName).WithDurable(false).WithAutoDelete(true);
 
+            
+
             //create sink
             var amqpSink = AmqpSink.CreateSimple(
-                AmqpSinkSettings.Create(DefaultAmqpConnection.Instance)
+                AmqpSinkSettings.Create(connectionSettings)
                 .WithRoutingKey(queueName)
                 .WithDeclarations(queueDeclaration));
 
@@ -46,11 +53,11 @@ namespace Akka.Stream.Alpakka.Amqp.Tests
 
             //run sink
             var input = new List<string> { "one", "two", "three", "four", "five" };
-            Source.From(input).Select(ByteString.FromString).RunWith(amqpSink, _materializer);
+            Source.From(input).Select(ByteString.FromString).RunWith(amqpSink, _materializer).Wait();
 
             //run source
             var result =
-                amqpSource.Select(m => m.Bytes.DecodeString(Encoding.UTF8))
+                amqpSource.Select(m => m.Bytes.ToString(Encoding.UTF8))
                     .Take(input.Count)
                     .RunWith(Sink.Seq<string>(), _materializer);
 

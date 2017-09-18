@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 using Akka.Streams;
 using Akka.Streams.Stage;
 using Akka.Util.Internal;
@@ -14,29 +15,62 @@ namespace Akka.Stream.Alpakka.Amqp
         public static IConnectionFactory ConnectionFactoryFrom(IAmqpConnectionSettings settings)
         {
             var factory = new ConnectionFactory();
-            if (settings is AmqpConnectionUri)
+            switch (settings)
             {
-                var uriSettings = (AmqpConnectionUri) settings;
-                factory.Uri = uriSettings.Uri;
-            }
-            if (settings is AmqpConnectionDetails)
-            {
-                var connectionDetails = (AmqpConnectionDetails) settings;
-                factory.HostName = connectionDetails.Host;
-                factory.Port = connectionDetails.Port;
-                if (connectionDetails.Credentials != null)
+                case AmqpConnectionUri connectionUri:
+                    factory.Uri = connectionUri.Uri;
+                    break;
+                case AmqpConnectionDetails details:
                 {
-                    factory.UserName = connectionDetails.Credentials.Username;
-                    factory.Password = connectionDetails.Credentials.Password;
+                    if (details.Credentials.HasValue)
+                    {
+                        factory.UserName = details.Credentials.Value.Username;
+                        factory.Password = details.Credentials.Value.Password;
+                    }
+                    if (!string.IsNullOrEmpty(details.VirtualHost))
+                        factory.VirtualHost = details.VirtualHost;
+                    if (details.Ssl != null)
+                        factory.Ssl = details.Ssl;
+                    if (details.AutomaticRecoveryEnabled.HasValue)
+                        factory.AutomaticRecoveryEnabled = details.AutomaticRecoveryEnabled.Value;
+                    if (details.RequestedHeartbeat.HasValue)
+                        factory.RequestedHeartbeat = details.RequestedHeartbeat.Value;
+                    if (details.NetworkRecoveryInterval.HasValue)
+                        factory.NetworkRecoveryInterval = details.NetworkRecoveryInterval.Value;
+                    if (details.TopologyRecoveryEnabled.HasValue)
+                        factory.TopologyRecoveryEnabled = details.TopologyRecoveryEnabled.Value;
+                    if (details.ConnectionTimeout.HasValue)
+                        factory.ContinuationTimeout = details.ConnectionTimeout.Value;
+                    if (details.HandshakeTimeout.HasValue)
+                        factory.HandshakeContinuationTimeout = details.HandshakeTimeout.Value;
+                    break;
                 }
-                if (connectionDetails.VirtualHost != null)
-                {
-                    factory.VirtualHost = connectionDetails.VirtualHost;
-                }
+                case DefaultAmqpConnection defaultConnection:
+                    //leave it be as is
+                    break;
             }
-            //DefaultAmqpConnection => // leave it be as is
-
             return factory;
+        }
+
+        public static IConnection NewConnection(IConnectionFactory factory, IAmqpConnectionSettings settings)
+        {
+            switch (settings)
+            {
+                case AmqpConnectionDetails details:
+                {
+                    if (details.HostAndPortList.Count > 0)
+                    {
+                        return factory.CreateConnection(details.HostAndPortList
+                            .Select(pair => new AmqpTcpEndpoint(pair.host, pair.port)).ToList());
+                    }
+                    else
+                    {
+                        throw new ArgumentException("You need to supply at least one host/port pair.");
+                    }
+                }
+                default:
+                    return factory.CreateConnection();
+            }
         }
     }
 
@@ -59,44 +93,56 @@ namespace Akka.Stream.Alpakka.Amqp
 
         public abstract IConnectionFactory ConnectionFactoryFrom(IAmqpConnectionSettings settings);
 
+        public abstract IConnection NewConnection(IConnectionFactory factory, IAmqpConnectionSettings settings);
+
         public abstract void WhenConnected();
+
+        public abstract void OnFailure(Exception ex);
 
         public override void PreStart()
         {
-            var factory = ConnectionFactoryFrom(Settings.ConnectionSettings);
-            Connection = factory.CreateConnection();
-            Channel = Connection.CreateModel();
-            ShutdownCallback = GetAsyncCallback<ShutdownEventArgs>(args =>
+            try
             {
-                if (args.Initiator != ShutdownInitiator.Application)
-                    FailStage(ShutdownSignalException.FromArgs(args));
-            });
-            Connection.ConnectionShutdown += OnConnectionShutdown;
-            Channel.ModelShutdown += OnChannelShutdown;
+                var factory = ConnectionFactoryFrom(Settings.ConnectionSettings);
+                Connection = NewConnection(factory, Settings.ConnectionSettings);
+                Channel = Connection.CreateModel();
+                ShutdownCallback = GetAsyncCallback<ShutdownEventArgs>(args =>
+                {
+                    if (args.Initiator != ShutdownInitiator.Application)
+                        FailStage(ShutdownSignalException.FromArgs(args));
+                });
+                Connection.ConnectionShutdown += OnConnectionShutdown;
+                Channel.ModelShutdown += OnChannelShutdown;
 
-            Settings.Declarations.ForEach(declaration =>
+                Settings.Declarations.ForEach(declaration =>
+                {
+                    if (declaration is QueueDeclaration)
+                    {
+                        var queueDeclaration = (QueueDeclaration)declaration;
+                        Channel.QueueDeclare(queueDeclaration.Name, queueDeclaration.Durable, queueDeclaration.Exclusive,
+                            queueDeclaration.AutoDelete, queueDeclaration.Arguments);
+                    }
+                    else if (declaration is BindingDeclaration)
+                    {
+                        var bindingDeclaration = (BindingDeclaration)declaration;
+                        Channel.QueueBind(bindingDeclaration.Queue, bindingDeclaration.Exchange,
+                            bindingDeclaration.RoutingKey ?? "", bindingDeclaration.Arguments);
+                    }
+                    else if (declaration is ExchangeDeclaration)
+                    {
+                        var exchangeDeclaration = (ExchangeDeclaration)declaration;
+                        Channel.ExchangeDeclare(exchangeDeclaration.Name, exchangeDeclaration.ExchangeType,
+                            exchangeDeclaration.Durable, exchangeDeclaration.AutoDelete, exchangeDeclaration.Arguments);
+                    }
+                });
+
+                WhenConnected();
+            }
+            catch (Exception e)
             {
-                if (declaration is QueueDeclaration)
-                {
-                    var queueDeclaration = (QueueDeclaration) declaration;
-                    Channel.QueueDeclare(queueDeclaration.Name, queueDeclaration.Durable, queueDeclaration.Exclusive,
-                        queueDeclaration.AutoDelete, queueDeclaration.Arguments);
-                }
-                else if (declaration is BindingDeclaration)
-                {
-                    var bindingDeclaration = (BindingDeclaration) declaration;
-                    Channel.QueueBind(bindingDeclaration.Queue, bindingDeclaration.Exchange,
-                        bindingDeclaration.RoutingKey??"", bindingDeclaration.Arguments);
-                }
-                else if (declaration is ExchangeDeclaration)
-                {
-                    var exchangeDeclaration = (ExchangeDeclaration) declaration;
-                    Channel.ExchangeDeclare(exchangeDeclaration.Name, exchangeDeclaration.ExchangeType,
-                        exchangeDeclaration.Durable, exchangeDeclaration.AutoDelete, exchangeDeclaration.Arguments);
-                }
-            });
-
-            WhenConnected();
+                OnFailure(e);
+                throw;
+            }
         }
 
         private void OnChannelShutdown(object sender, ShutdownEventArgs shutdownEventArgs)
